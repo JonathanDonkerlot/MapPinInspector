@@ -52,3 +52,8 @@ The standalone compiled mod is output to `MapPinInspector\bin\Release\net472\Map
 
 ## Architecture
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the full technical design, verified `Root.Township.dll` API mappings, UV-to-surface projection math, and lifecycle guarantees.
+
+
+<p>
+    <img src="https://img.shields.io/github/downloads/JonathanDonkerlot/MapPinInspector/total?style=for-the-badge&logo=github&color=7fff6e">
+</p>
