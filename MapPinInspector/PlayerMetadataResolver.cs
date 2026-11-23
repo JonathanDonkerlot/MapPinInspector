@@ -188,7 +188,7 @@ namespace MapPinInspector
                 {
                     PlayerCandidate p = res.Player;
                     bool effectiveFriend = iconFriend || (!p.IsLocalPlayer && p.IsFriend);
-                    string displayName = p.IsLocalPlayer ? $"{p.DisplayName} (You)" : p.DisplayName;
+                    string displayName = p.DisplayName;
                     string status = includeStatusInfo
                         ? BuildStatusLabel(effectiveFriend, p.IsLocalPlayer, p.IsDowned, p.IsSpirit, marker.Position, boardWorldCenter)
                         : string.Empty;
@@ -204,7 +204,7 @@ namespace MapPinInspector
                 }
                 else
                 {
-                    string fallbackName = iconFriend ? "Friend (Out of Range)" : "Traveler";
+                    string fallbackName = iconFriend ? "Friend" : "Traveler";
                     string status = includeStatusInfo
                         ? BuildStatusLabel(iconFriend, false, false, false, marker.Position, boardWorldCenter)
                         : string.Empty;

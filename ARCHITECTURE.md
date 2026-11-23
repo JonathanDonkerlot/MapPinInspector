@@ -84,15 +84,11 @@ The card is parented to the active `PinAnchor` transform (and dynamically switch
 
 ```text
 PinAnchor_<MarkerIndex> (Transform on Renderer Plane surface, moves with marker)
- └─ MapPinInspector_CardRoot (Transform offset +0.055m along board outward normal + upward)
-     ├─ CardCanvas (UnityEngine.Canvas, RenderMode.WorldSpace, sortingOrder = 600, scale ~0.00055 * CardScale)
+ └─ MapPinInspector_CardRoot (Transform offset +0.026m along board outward normal + upward)
+     ├─ CardCanvas (UnityEngine.Canvas, RenderMode.WorldSpace, sortingOrder = 600, scale ~0.00032 * CardScale)
      │   ├─ CanvasGroup (alpha fade control, blocksRaycasts = false, interactable = false)
-     │   ├─ Backdrop (UnityEngine.UI.Image, dark slate translucent panel, double-sided material)
-     │   ├─ AccentFrame (Top/Bottom/Left/Right thin borders color-coded to Friend/Hostile/Cluster)
-     │   ├─ HeaderBadge (Role/Type label: "FRIEND" / "PLAYER" / "CLUSTER (N)")
-     │   ├─ PrimaryName (TMPro.TextMeshProUGUI or UnityEngine.UI.Text — Display Name(s))
-     │   ├─ StatusLine (Optional status: Friend/Hostile, Spirit/Downed, Zone/Distance when ShowStatusInfo = true)
-     │   └─ HintFooter ("Tap pin again to close" or "Tap to cycle 1/N")
+     │   ├─ ParchmentBackdrop (UnityEngine.UI.Image, procedural 9-sliced woven/deckled parchment Sprite, double-sided material)
+     │   └─ PlayerName (TMPro.TextMeshProUGUI or UnityEngine.UI.Text — auto-sized player name(s) only, sepia ink)
      └─ AudioSource (spatialBlend = 1.0, procedural crisp tactile click AudioClip)
 ```
 
@@ -100,7 +96,7 @@ PinAnchor_<MarkerIndex> (Transform on Renderer Plane surface, moves with marker)
 Every `LateUpdate` while the card is visible:
 1. Read camera position `C` from `PlayerController.Current?.Camera` (fallback `Camera.main`).
 2. Compute vector `toCard = CardWorldPos - C` (so canvas `+Z` points *away* from the viewer and UI front `-Z` faces the viewer, matching Unity WorldSpace `Canvas` facing convention) and clamp vertical pitch to `[-35°, +35°]` around the horizon while keeping world up `(0, 1, 0)` upright.
-3. Also push the card root at least `0.045m` along the board's outward normal `N_world` and slightly along `Vector3.up` (`0.055m * CardScale`) so the card never Z-fights or intersects the board mesh even at steep viewing angles.
+3. Also push the card root at least `0.026m` along the board's outward normal `N_world` and slightly along `Vector3.up` (`0.032m * CardScale`) so the compact card never Z-fights or intersects the board mesh even at steep viewing angles.
 
 ---
 

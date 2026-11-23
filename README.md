@@ -5,12 +5,11 @@
 ## Features
 - **Multi-Board Support:** Automatically attaches to every Map Board in the world, including dynamically loaded boards.
 - **VR Tactile & Pointer Interaction:** Poke player pins directly with your left or right index fingertip, point-and-click with your XR trigger, or click with the mouse in desktop view—using non-blocking trigger colliders (`Ignore Raycast` layer) that never interfere with grabs or board touch crystals.
-- **Dynamic World-Space Nameplate Card:**
+- **Dynamic World-Space Parchment Tag:**
+  - Compact aged-parchment card with deckled paper edges displaying only the player's name in crisp ink.
   - Anchored directly to the selected pin so it tracks moving players across the map.
-  - Offset forward from the board surface and billboarded toward your VR camera for crisp legibility with zero Z-fighting.
-  - Color-coded borders and badges matching **Friend (Green)**, **Player (Red)**, and **Cluster (Gold)** states.
-  - Displays optional relationship status, spirit/downed state, and zone/distance info.
-- **Overlapping Pin Clustering:** When multiple players stand near the same map spot, overlapping pins automatically group into a stacked card list—tap again to cycle through each player or walk away to auto-dismiss.
+  - Offset cleanly in front of the board surface and billboarded toward your VR camera with zero Z-fighting.
+- **Overlapping Pin Clustering:** When multiple players stand near the same map spot, overlapping pins automatically group into a stacked name list—tap again to cycle or walk away to auto-dismiss.
 - **Tactile & Audio Feedback:** Subtle pulsing selection ring, synthesized spatial click audio, and gentle XR controller haptic pulse.
 
 ## Requirements
