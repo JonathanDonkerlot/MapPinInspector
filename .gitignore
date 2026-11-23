@@ -1,0 +1,39 @@
+# Build outputs
+bin/
+obj/
+out/
+Publish/
+*.dll
+*.exe
+*.pdb
+*.mdb
+
+# IDE & editor files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.sln.docstates
+*.DotSettings.user
+.DS_Store
+Thumbs.db
+
+# Test results & coverage
+TestResults/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+
+# Local game files, MelonLoader logs, and runtime configs
+Managed/
+MelonLoader/
+Mods/
+UserData/
+UserLibs/
+Plugins/
+*.log
+GameObjectDump.txt
+Waypoints.txt
+MelonPreferences.cfg
