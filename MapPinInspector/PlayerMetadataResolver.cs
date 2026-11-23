@@ -40,6 +40,7 @@ namespace MapPinInspector
 
     /// <summary>
     /// Identifies player pins among MapBoard markers and correlates each pin with live Player metadata.
+    /// Maintains session-scoped bindings so players who leave chunk range retain their resolved names.
     /// </summary>
     public sealed class PlayerMetadataResolver
     {
@@ -51,8 +52,10 @@ namespace MapPinInspector
         private float _nextIconScanTime;
 
         private readonly Dictionary<uint, PlayerLandmark> _landmarksByIndex = new Dictionary<uint, PlayerLandmark>();
+        private readonly Dictionary<uint, int> _knownMarkerToPlayerId = new Dictionary<uint, int>();
         private readonly List<PinCorrelationInput> _correlationInputs = new List<PinCorrelationInput>();
         private readonly List<PlayerCandidate> _playerCandidates = new List<PlayerCandidate>();
+        private readonly List<uint> _pruneMarkerBuffer = new List<uint>();
 
         private static AccessTools.FieldRef<PlayerLandmark, LandmarkIcon> CreateFriendIconRef()
         {
@@ -64,6 +67,27 @@ namespace MapPinInspector
             {
                 return null;
             }
+        }
+
+        public void ForgetPlayer(int playerId)
+        {
+            if (playerId == 0)
+                return;
+
+            _pruneMarkerBuffer.Clear();
+            foreach (KeyValuePair<uint, int> kv in _knownMarkerToPlayerId)
+            {
+                if (kv.Value == playerId)
+                    _pruneMarkerBuffer.Add(kv.Key);
+            }
+
+            for (int i = 0; i < _pruneMarkerBuffer.Count; i++)
+                _knownMarkerToPlayerId.Remove(_pruneMarkerBuffer[i]);
+        }
+
+        public void ClearKnownBindings()
+        {
+            _knownMarkerToPlayerId.Clear();
         }
 
         public void RefreshPlayerIconCache(float nowSeconds)
@@ -153,10 +177,14 @@ namespace MapPinInspector
         {
             var output = new Dictionary<uint, ResolvedPinMetadata>();
             if (playerMarkers == null || playerMarkers.Count == 0)
+            {
+                _knownMarkerToPlayerId.Clear();
                 return output;
+            }
 
             _correlationInputs.Clear();
             var iconIsFriendLookup = new Dictionary<uint, bool>(playerMarkers.Count);
+            var liveMarkerIds = new HashSet<uint>();
 
             for (int i = 0; i < playerMarkers.Count; i++)
             {
@@ -164,6 +192,7 @@ namespace MapPinInspector
                 if (!ClassifyMarker(marker, out bool iconFriend))
                     continue;
 
+                liveMarkerIds.Add(marker.Index);
                 iconIsFriendLookup[marker.Index] = iconFriend;
                 _correlationInputs.Add(new PinCorrelationInput(
                     marker.Index,
@@ -171,12 +200,23 @@ namespace MapPinInspector
                     (_cachedFriendIcon != null || _cachedNonFriendIcon != null) ? (bool?)iconFriend : null));
             }
 
+            // Prune bindings for markers that have disappeared from ClientLandmarkManager.
+            _pruneMarkerBuffer.Clear();
+            foreach (KeyValuePair<uint, int> kv in _knownMarkerToPlayerId)
+            {
+                if (!liveMarkerIds.Contains(kv.Key))
+                    _pruneMarkerBuffer.Add(kv.Key);
+            }
+            for (int i = 0; i < _pruneMarkerBuffer.Count; i++)
+                _knownMarkerToPlayerId.Remove(_pruneMarkerBuffer[i]);
+
             CollectPlayerCandidates();
 
             Dictionary<uint, MatchedPinResult> matched = PlayerPinMatcher.MatchAll(
                 _correlationInputs,
                 _playerCandidates,
-                maxMatchDistanceMeters: 35f);
+                maxMatchDistanceMeters: 35f,
+                knownBindings: _knownMarkerToPlayerId);
 
             for (int i = 0; i < playerMarkers.Count; i++)
             {
@@ -187,6 +227,9 @@ namespace MapPinInspector
                 if (matched.TryGetValue(marker.Index, out MatchedPinResult res) && res.Matched)
                 {
                     PlayerCandidate p = res.Player;
+                    if (res.IsHighConfidence && p.PlayerId != 0)
+                        _knownMarkerToPlayerId[marker.Index] = p.PlayerId;
+
                     bool effectiveFriend = iconFriend || (!p.IsLocalPlayer && p.IsFriend);
                     string displayName = p.DisplayName;
                     string status = includeStatusInfo
@@ -233,6 +276,18 @@ namespace MapPinInspector
                 if (allPlayers == null)
                     return;
 
+                FriendshipManager localFriends = null;
+                try
+                {
+                    IPlayer currentPlayer = Player.Current;
+                    if (currentPlayer != null)
+                        localFriends = currentPlayer.FriendshipManager;
+                }
+                catch
+                {
+                    localFriends = null;
+                }
+
                 foreach (IPlayer iPlayer in allPlayers)
                 {
                     if (iPlayer == null)
@@ -245,7 +300,11 @@ namespace MapPinInspector
                     int id = iPlayer.UserInfo != null ? iPlayer.UserInfo.Identifier : iPlayer.GetHashCode();
                     PlayerController pc = iPlayer.PlayerController;
                     bool isLocal = iPlayer.IsLocalPlayer;
-                    bool isFriend = iPlayer.FriendshipManager != null && iPlayer.FriendshipManager.IsFriend;
+
+                    bool isFriend = !isLocal && (
+                        (iPlayer.FriendshipManager != null && iPlayer.FriendshipManager.IsFriend) ||
+                        (localFriends != null && iPlayer.UserInfo != null && localFriends.IsFriendsWith(iPlayer.UserInfo.Identifier)));
+
                     bool isDowned = pc != null && pc.IsDowned;
                     bool isSpirit = pc != null && pc.IsSpirit;
 
@@ -257,6 +316,7 @@ namespace MapPinInspector
                             landmarkIndex = lm.Index;
                     }
 
+                    uint networkEntityId = 0;
                     Vec2 worldXZ = Vec2.Zero;
                     bool hasPos = false;
 
@@ -266,11 +326,16 @@ namespace MapPinInspector
                         worldXZ = new Vec2(pos.x, pos.z);
                         hasPos = true;
                     }
-                    else if (iPlayer is Player concretePlayer && concretePlayer.Position.HasValue)
+
+                    if (iPlayer is Player concretePlayer)
                     {
-                        Vector3 pos = concretePlayer.Position.Value;
-                        worldXZ = new Vec2(pos.x, pos.z);
-                        hasPos = true;
+                        networkEntityId = concretePlayer.Identifier;
+                        if (!hasPos && concretePlayer.Position.HasValue)
+                        {
+                            Vector3 pos = concretePlayer.Position.Value;
+                            worldXZ = new Vec2(pos.x, pos.z);
+                            hasPos = true;
+                        }
                     }
 
                     _playerCandidates.Add(new PlayerCandidate(
@@ -282,7 +347,8 @@ namespace MapPinInspector
                         isLocal,
                         isDowned,
                         isSpirit,
-                        landmarkIndex));
+                        landmarkIndex,
+                        networkEntityId));
                 }
             }
             catch

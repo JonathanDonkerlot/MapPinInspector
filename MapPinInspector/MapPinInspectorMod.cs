@@ -158,10 +158,21 @@ namespace MapPinInspector
 
         private void OnPlayerRemoved(Player removedPlayer)
         {
+            int playerId = 0;
+            try
+            {
+                if (removedPlayer != null && removedPlayer.UserInfo != null)
+                    playerId = removedPlayer.UserInfo.Identifier;
+            }
+            catch
+            {
+                playerId = 0;
+            }
+
             foreach (KeyValuePair<MapBoardDirectRenderer, MapBoardInspectorController> kv in _controllersByRenderer)
             {
                 if (kv.Value != null)
-                    kv.Value.MarkPinsDirty();
+                    kv.Value.OnPlayerDisconnected(playerId);
             }
         }
 

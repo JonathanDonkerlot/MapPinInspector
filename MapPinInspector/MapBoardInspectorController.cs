@@ -90,6 +90,12 @@ namespace MapPinInspector
             _pinsDirty = true;
         }
 
+        public void OnPlayerDisconnected(int playerId)
+        {
+            _metadataResolver?.ForgetPlayer(playerId);
+            _pinsDirty = true;
+        }
+
         private void SubscribeToLandmarkEvents()
         {
             try
@@ -715,6 +721,7 @@ namespace MapPinInspector
             }
 
             _activeSelection = null;
+            _metadataResolver?.ClearKnownBindings();
 
             if (_cardView != null)
             {
