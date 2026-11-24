@@ -9,7 +9,8 @@ using UnityEngine;
 namespace MapPinInspector
 {
     /// <summary>
-    /// MelonLoader entry point for MapPinInspector. Coordinates MapBoard attachment, configuration, and lifecycle cleanup.
+    /// MelonLoader entry point for MapPinInspector. Coordinates MapBoard attachment,
+    /// native font prewarming, configuration, and scene lifecycle cleanup.
     /// </summary>
     public sealed class MapPinInspectorMod : MelonMod
     {
@@ -46,12 +47,13 @@ namespace MapPinInspector
                 LoggerInstance.Warning($"[MapPinInspector] Could not subscribe to Player.OnPlayerRemoved: {ex.Message}");
             }
 
+            string fontSource = NameplateCardView.PrewarmTownshipFont(LoggerInstance, _config.EffectiveDebugLogging);
             ScanExistingBoards();
 
             LoggerInstance.Msg(
-                $"[MapPinInspector] Initialized | AutoDismiss={_config.EffectiveAutoDismissDistance:F1}m, " +
-                $"Scale={_config.EffectiveCardScale:F2}, ClusterRadius={_config.EffectiveClusterRadius:F3}m, " +
-                $"ShowStatus={_config.EffectiveShowStatusInfo}");
+                $"[MapPinInspector] Initialized v1.1.2 | Font={fontSource}, " +
+                $"AutoDismiss={_config.EffectiveAutoDismissDistance:F1}m, " +
+                $"Scale={_config.EffectiveCardScale:F2}, ClusterRadius={_config.EffectiveClusterRadius:F3}m");
         }
 
         public override void OnDeinitializeMelon()
@@ -75,6 +77,7 @@ namespace MapPinInspector
             if (_isIl2CppAborted)
                 return;
 
+            NameplateCardView.PrewarmTownshipFont(LoggerInstance, _config.EffectiveDebugLogging);
             ScanExistingBoards();
         }
 
@@ -91,6 +94,7 @@ namespace MapPinInspector
             if (_isIl2CppAborted || renderer == null)
                 return;
 
+            NameplateCardView.PrewarmTownshipFont(LoggerInstance, _config.EffectiveDebugLogging);
             AttachToRenderer(renderer);
         }
 

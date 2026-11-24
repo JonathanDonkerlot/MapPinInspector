@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using MapPinInspector.Core;
-using TMPro;
+using MelonLoader;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -10,8 +10,7 @@ namespace MapPinInspector
 {
     /// <summary>
     /// Builds and animates a compact aged-parchment 3D world-space nameplate displaying only player name(s),
-    /// paired with a subtle selection ring and spatial click audio.
-    /// Prefers TextMeshPro when a TMP_FontAsset is available and falls back cleanly to UnityEngine.UI.Text.
+    /// rendered with A Township Tale's native Signpost/UI font (hot-swapping from serif fallback if loaded late).
     /// </summary>
     public sealed class NameplateCardView
     {
@@ -25,41 +24,13 @@ namespace MapPinInspector
         private const float ExtraClusterRowHeight = 34f;
         private const float CanvasWorldScale = 0.00032f; // 300 px -> ~9.6 cm wide
 
-        private sealed class TextLabelSlot
-        {
-            public TextMeshProUGUI Tmp;
-            public Text Legacy;
-            public RectTransform Rect;
-
-            public void Configure(string value, int maxFontSize, int minFontSize, bool singleLine)
-            {
-                if (Tmp != null)
-                {
-                    Tmp.text = value ?? string.Empty;
-                    Tmp.enableWordWrapping = !singleLine;
-                    Tmp.enableAutoSizing = true;
-                    Tmp.fontSizeMin = minFontSize;
-                    Tmp.fontSizeMax = maxFontSize;
-                    Tmp.fontSize = maxFontSize;
-                }
-                else if (Legacy != null)
-                {
-                    Legacy.text = value ?? string.Empty;
-                    Legacy.horizontalOverflow = singleLine ? HorizontalWrapMode.Overflow : HorizontalWrapMode.Wrap;
-                    Legacy.resizeTextForBestFit = true;
-                    Legacy.resizeTextMinSize = minFontSize;
-                    Legacy.resizeTextMaxSize = maxFontSize;
-                    Legacy.fontSize = maxFontSize;
-                }
-            }
-        }
-
         private readonly GameObject _cardRoot;
         private readonly Canvas _canvas;
         private readonly RectTransform _canvasRect;
         private readonly RectTransform _backdropRect;
         private readonly CanvasGroup _canvasGroup;
-        private readonly TextLabelSlot _namesLabel;
+        private readonly Text _namesText;
+        private readonly RectTransform _namesRect;
 
         private readonly GameObject _ringRoot;
         private readonly LineRenderer _ringRenderer;
@@ -68,10 +39,17 @@ namespace MapPinInspector
 
         private static Material _doubleSidedUiMat;
         private static Material _doubleSidedFontMat;
+        private static Font _doubleSidedFontSource;
+        private static Font _cachedTownshipFont;
+        private static string _cachedFontSource = "Unresolved";
+        private static bool _cachedFontIsFallback = true;
+        private static float _nextFontReprobeTime;
+
         private static Material _ringMaterial;
         private static Texture2D _parchmentTexture;
         private static Sprite _parchmentSprite;
 
+        private bool _usingFallbackFont;
         private float _currentAlpha;
         private float _pulseElapsed;
         private bool _targetVisible;
@@ -108,9 +86,8 @@ namespace MapPinInspector
 
             Material uiMat = GetDoubleSidedUiMaterial();
             Sprite parchment = GetParchmentSprite();
-            TMP_FontAsset tmpFont = ResolveTmpFontAsset();
-            Font legacyFont = tmpFont == null ? ResolveLegacyFont() : null;
-            Material legacyFontMat = legacyFont != null ? GetDoubleSidedFontMaterial(legacyFont) : null;
+            Font font = ResolveFont(out _, out bool isFallback);
+            _usingFallbackFont = isFallback;
 
             Image backdrop = CreateParchmentBackdrop(
                 canvasGo.transform,
@@ -119,12 +96,11 @@ namespace MapPinInspector
                 uiMat);
             _backdropRect = backdrop.rectTransform;
 
-            _namesLabel = CreateNameLabel(
+            _namesText = CreateNameText(
                 canvasGo.transform,
-                tmpFont,
-                legacyFont,
-                legacyFontMat,
+                font,
                 new Vector2(BaseCanvasWidth - 42f, SingleRowHeight - 20f));
+            _namesRect = _namesText.rectTransform;
 
             _ringRoot = new GameObject("MapPinInspector_SelectionRing");
             _ringRoot.layer = 2;
@@ -143,6 +119,20 @@ namespace MapPinInspector
             _ringRoot.SetActive(false);
         }
 
+        /// <summary>
+        /// Probes A Township Tale's loaded Signpost/UI fonts early and returns the resolved source description.
+        /// </summary>
+        public static string PrewarmTownshipFont(MelonLogger.Instance logger, bool debugLogging)
+        {
+            Font font = ResolveFont(out string source, out bool isFallback);
+            if (debugLogging && logger != null)
+            {
+                string fontName = font != null ? font.name : "None";
+                logger.Msg($"[MapPinInspector] Resolved card font '{fontName}' via {source} (fallback={isFallback}).");
+            }
+            return source;
+        }
+
         public void SetSelection(ClusterSelection selection, Transform pinAnchorTransform, bool showStatusInfo, bool playFeedback)
         {
             _ = showStatusInfo; // Card deliberately shows player name(s) only for compact readability.
@@ -152,6 +142,9 @@ namespace MapPinInspector
                 SetVisible(false);
                 return;
             }
+
+            if (_usingFallbackFont)
+                TryUpgradeToNativeFont();
 
             if (pinAnchorTransform != null)
             {
@@ -233,6 +226,19 @@ namespace MapPinInspector
             UpdateSelectionRing(pinWorldPos, safeNormal, deltaTime);
         }
 
+        private void TryUpgradeToNativeFont()
+        {
+            Font resolved = ResolveFont(out _, out bool isFallback);
+            if (resolved == null || _namesText == null)
+                return;
+
+            if (!isFallback || _namesText.font != resolved)
+            {
+                ApplyFontToText(_namesText, resolved);
+                _usingFallbackFont = isFallback;
+            }
+        }
+
         private void UpdateSelectionRing(Vector3 pinWorldPos, Vector3 boardNormal, float deltaTime)
         {
             if (_ringRoot == null || _ringRenderer == null)
@@ -281,7 +287,7 @@ namespace MapPinInspector
             if (!isCluster)
             {
                 ResizeCard(SingleRowHeight);
-                _namesLabel.Configure(focused.DisplayName, maxFontSize: 36, minFontSize: 18, singleLine: true);
+                ConfigureNameText(focused.DisplayName, maxFontSize: 36, minFontSize: 18, singleLine: true);
                 return;
             }
 
@@ -307,7 +313,33 @@ namespace MapPinInspector
 
             float cardHeight = SingleRowHeight + Math.Max(0, rowCount - 1) * ExtraClusterRowHeight;
             ResizeCard(cardHeight);
-            _namesLabel.Configure(sb.ToString(), maxFontSize: 28, minFontSize: 16, singleLine: false);
+            ConfigureNameText(sb.ToString(), maxFontSize: 28, minFontSize: 16, singleLine: false);
+        }
+
+        private void ConfigureNameText(string value, int maxFontSize, int minFontSize, bool singleLine)
+        {
+            if (_namesText == null)
+                return;
+
+            _namesText.text = value ?? string.Empty;
+            _namesText.horizontalOverflow = singleLine ? HorizontalWrapMode.Overflow : HorizontalWrapMode.Wrap;
+
+            bool isDynamic = _namesText.font == null || _namesText.font.dynamic;
+            if (isDynamic)
+            {
+                _namesText.fontStyle = FontStyle.Bold;
+                _namesText.resizeTextForBestFit = true;
+                _namesText.resizeTextMinSize = minFontSize;
+                _namesText.resizeTextMaxSize = maxFontSize;
+                _namesText.fontSize = maxFontSize;
+            }
+            else
+            {
+                // Unity logs warnings if style or best-fit overrides are applied to non-dynamic bitmap fonts.
+                _namesText.fontStyle = FontStyle.Normal;
+                _namesText.resizeTextForBestFit = false;
+                _namesText.fontSize = _namesText.font.fontSize > 0 ? _namesText.font.fontSize : maxFontSize;
+            }
         }
 
         private void ResizeCard(float height)
@@ -317,8 +349,8 @@ namespace MapPinInspector
                 _canvasRect.sizeDelta = size;
             if (_backdropRect != null)
                 _backdropRect.sizeDelta = size;
-            if (_namesLabel.Rect != null)
-                _namesLabel.Rect.sizeDelta = new Vector2(BaseCanvasWidth - 42f, height - 20f);
+            if (_namesRect != null)
+                _namesRect.sizeDelta = new Vector2(BaseCanvasWidth - 42f, height - 20f);
         }
 
         public void Destroy()
@@ -391,12 +423,7 @@ namespace MapPinInspector
             return img;
         }
 
-        private static TextLabelSlot CreateNameLabel(
-            Transform parent,
-            TMP_FontAsset tmpFont,
-            Font legacyFont,
-            Material legacyMat,
-            Vector2 sizeDelta)
+        private static Text CreateNameText(Transform parent, Font font, Vector2 sizeDelta)
         {
             var go = new GameObject("PlayerName");
             go.layer = 2;
@@ -406,44 +433,299 @@ namespace MapPinInspector
             rect.sizeDelta = sizeDelta;
             rect.localPosition = new Vector3(0f, 0f, -1f);
 
-            var slot = new TextLabelSlot { Rect = rect };
-
-            if (tmpFont != null)
-            {
-                TextMeshProUGUI tmp = go.AddComponent<TextMeshProUGUI>();
-                tmp.font = tmpFont;
-                tmp.fontSize = 36f;
-                tmp.fontStyle = FontStyles.Bold;
-                tmp.alignment = TextAlignmentOptions.Center;
-                tmp.color = ParchmentInkColor;
-                tmp.enableWordWrapping = false;
-                tmp.enableAutoSizing = true;
-                tmp.fontSizeMin = 18f;
-                tmp.fontSizeMax = 36f;
-                tmp.overflowMode = TextOverflowModes.Truncate;
-                tmp.raycastTarget = false;
-                tmp.richText = false;
-                slot.Tmp = tmp;
-                return slot;
-            }
-
             Text txt = go.AddComponent<Text>();
-            if (legacyFont != null)
-                txt.font = legacyFont;
-            if (legacyMat != null)
-                txt.material = legacyMat;
-            txt.fontSize = 36;
-            txt.fontStyle = FontStyle.Bold;
             txt.alignment = TextAnchor.MiddleCenter;
             txt.color = ParchmentInkColor;
             txt.horizontalOverflow = HorizontalWrapMode.Overflow;
             txt.verticalOverflow = VerticalWrapMode.Truncate;
-            txt.resizeTextForBestFit = true;
-            txt.resizeTextMinSize = 18;
-            txt.resizeTextMaxSize = 36;
             txt.raycastTarget = false;
-            slot.Legacy = txt;
-            return slot;
+
+            ApplyFontToText(txt, font);
+            return txt;
+        }
+
+        private static void ApplyFontToText(Text txt, Font font)
+        {
+            if (txt == null)
+                return;
+
+            if (font != null)
+            {
+                txt.font = font;
+                Material doubleSidedMat = GetDoubleSidedFontMaterial(font);
+                if (doubleSidedMat != null)
+                    txt.material = doubleSidedMat;
+            }
+
+            bool isDynamic = font == null || font.dynamic;
+            if (isDynamic)
+            {
+                txt.fontStyle = FontStyle.Bold;
+                txt.resizeTextForBestFit = true;
+                txt.resizeTextMinSize = 18;
+                txt.resizeTextMaxSize = 36;
+                txt.fontSize = 36;
+            }
+            else
+            {
+                txt.fontStyle = FontStyle.Normal;
+                txt.resizeTextForBestFit = false;
+                txt.fontSize = font.fontSize > 0 ? font.fontSize : 36;
+            }
+        }
+
+        private static Font ResolveFont(out string source, out bool isFallback)
+        {
+            if (_cachedTownshipFont != null && !_cachedFontIsFallback)
+            {
+                source = _cachedFontSource;
+                isFallback = false;
+                return _cachedTownshipFont;
+            }
+
+            float now = Time.unscaledTime;
+            if (_cachedTownshipFont != null && now < _nextFontReprobeTime)
+            {
+                source = _cachedFontSource;
+                isFallback = _cachedFontIsFallback;
+                return _cachedTownshipFont;
+            }
+
+            _nextFontReprobeTime = now + 2.0f;
+
+            if (TryResolveNativeTownshipFont(out Font nativeFont, out string nativeSource))
+            {
+                _cachedTownshipFont = nativeFont;
+                _cachedFontSource = nativeSource;
+                _cachedFontIsFallback = false;
+                source = nativeSource;
+                isFallback = false;
+                return nativeFont;
+            }
+
+            if (_cachedTownshipFont == null)
+            {
+                _cachedTownshipFont = ResolveStylizedFallbackFont(out string fallbackSource);
+                _cachedFontSource = fallbackSource;
+                _cachedFontIsFallback = true;
+            }
+
+            source = _cachedFontSource;
+            isFallback = _cachedFontIsFallback;
+            return _cachedTownshipFont;
+        }
+
+        private static bool TryResolveNativeTownshipFont(out Font font, out string source)
+        {
+            font = null;
+            source = string.Empty;
+
+            // 1. Check ATT's TextFont assets ("Signpost" and other world-sign TextFonts)
+            try
+            {
+                TextFont[] textFonts = Resources.FindObjectsOfTypeAll<TextFont>();
+                if (textFonts != null && textFonts.Length > 0)
+                {
+                    Font anyLinked = null;
+                    string anyLinkedName = null;
+
+                    for (int i = 0; i < textFonts.Length; i++)
+                    {
+                        TextFont tf = textFonts[i];
+                        if (tf == null || tf.LinkedFont == null)
+                            continue;
+
+                        if ((tf.name ?? string.Empty).IndexOf("Signpost", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            font = tf.LinkedFont;
+                            source = $"TextFont({tf.name}).LinkedFont";
+                            return true;
+                        }
+
+                        if (anyLinked == null)
+                        {
+                            anyLinked = tf.LinkedFont;
+                            anyLinkedName = tf.name;
+                        }
+                    }
+
+                    if (anyLinked != null)
+                    {
+                        font = anyLinked;
+                        source = $"TextFont({anyLinkedName}).LinkedFont";
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore transient resource probe issues.
+            }
+
+            // 2. Check active TextRenderer instances in the loaded scene
+            try
+            {
+                TextRenderer[] renderers = UnityEngine.Object.FindObjectsOfType<TextRenderer>();
+                if (renderers != null)
+                {
+                    for (int i = 0; i < renderers.Length; i++)
+                    {
+                        TextRenderer tr = renderers[i];
+                        if (tr != null && tr.Font != null && tr.Font.LinkedFont != null)
+                        {
+                            font = tr.Font.LinkedFont;
+                            source = $"TextRenderer.Font({tr.Font.name}).LinkedFont";
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore transient scene query issues.
+            }
+
+            // 3. Check wooden SignPostPanel UI Text components directly in the scene
+            try
+            {
+                SignPostPanel[] signs = UnityEngine.Object.FindObjectsOfType<SignPostPanel>();
+                if (signs != null)
+                {
+                    for (int i = 0; i < signs.Length; i++)
+                    {
+                        SignPostPanel sign = signs[i];
+                        if (sign == null)
+                            continue;
+
+                        Text signText = sign.GetComponentInChildren<Text>(true);
+                        if (signText != null && signText.font != null && !IsGenericSystemFont(signText.font))
+                        {
+                            font = signText.font;
+                            source = $"SignPostPanel.Text.font({font.name})";
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore transient scene query issues.
+            }
+
+            // 4. Scan all loaded UnityEngine.Font assets, prioritizing ATT signpost / stylized fonts
+            try
+            {
+                Font[] allFonts = Resources.FindObjectsOfTypeAll<Font>();
+                if (allFonts != null && allFonts.Length > 0)
+                {
+                    Font bestScored = null;
+                    int bestScore = int.MinValue;
+
+                    for (int i = 0; i < allFonts.Length; i++)
+                    {
+                        Font candidate = allFonts[i];
+                        if (candidate == null || IsGenericSystemFont(candidate))
+                            continue;
+
+                        int score = ScoreGameFontName(candidate.name);
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestScored = candidate;
+                        }
+                    }
+
+                    if (bestScored != null)
+                    {
+                        font = bestScored;
+                        source = $"LoadedFont({bestScored.name})";
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore transient resource probe issues.
+            }
+
+            // 5. Fallback scan over active Unity UI Text components (excluding our own card objects)
+            try
+            {
+                Text[] uiTexts = UnityEngine.Object.FindObjectsOfType<Text>();
+                if (uiTexts != null)
+                {
+                    for (int i = 0; i < uiTexts.Length; i++)
+                    {
+                        Text uiText = uiTexts[i];
+                        if (uiText == null || uiText.font == null)
+                            continue;
+                        if (uiText.gameObject.name == "PlayerName")
+                            continue;
+                        if (!IsGenericSystemFont(uiText.font))
+                        {
+                            font = uiText.font;
+                            source = $"SceneUIText({uiText.font.name})";
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore transient scene query issues.
+            }
+
+            return false;
+        }
+
+        private static bool IsGenericSystemFont(Font font)
+        {
+            if (font == null)
+                return true;
+
+            string name = font.name ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(name))
+                return true;
+
+            return name.IndexOf("Arial", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   name.IndexOf("LiberationSans", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   name.IndexOf("MapPinInspector", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static int ScoreGameFontName(string fontName)
+        {
+            if (string.IsNullOrEmpty(fontName))
+                return 0;
+
+            if (fontName.IndexOf("Signpost", StringComparison.OrdinalIgnoreCase) >= 0) return 100;
+            if (fontName.IndexOf("Township", StringComparison.OrdinalIgnoreCase) >= 0) return 90;
+            if (fontName.IndexOf("Alta", StringComparison.OrdinalIgnoreCase) >= 0) return 80;
+            if (fontName.IndexOf("Medieval", StringComparison.OrdinalIgnoreCase) >= 0) return 70;
+            if (fontName.IndexOf("Uncial", StringComparison.OrdinalIgnoreCase) >= 0) return 65;
+            if (fontName.IndexOf("Serif", StringComparison.OrdinalIgnoreCase) >= 0) return 50;
+            return 10;
+        }
+
+        private static Font ResolveStylizedFallbackFont(out string source)
+        {
+            try
+            {
+                Font osSerif = Font.CreateDynamicFontFromOSFont(
+                    new[] { "Georgia", "Palatino Linotype", "Book Antiqua", "Times New Roman" },
+                    34);
+                if (osSerif != null)
+                {
+                    source = $"OSFallback({osSerif.name})";
+                    return osSerif;
+                }
+            }
+            catch
+            {
+                // Fall through to Arial builtin.
+            }
+
+            source = "Builtin(Arial.ttf)";
+            return Resources.GetBuiltinResource<Font>("Arial.ttf");
         }
 
         private static Sprite GetParchmentSprite()
@@ -576,47 +858,6 @@ namespace MapPinInspector
             return Mathf.Lerp(Mathf.Lerp(a, b, ux), Mathf.Lerp(c, d, ux), uy);
         }
 
-        private static TMP_FontAsset ResolveTmpFontAsset()
-        {
-            try
-            {
-                if (TMP_Settings.defaultFontAsset != null)
-                    return TMP_Settings.defaultFontAsset;
-
-                TMP_FontAsset[] loaded = Resources.FindObjectsOfTypeAll<TMP_FontAsset>();
-                if (loaded != null && loaded.Length > 0)
-                {
-                    for (int i = 0; i < loaded.Length; i++)
-                    {
-                        if (loaded[i] != null && loaded[i].material != null)
-                            return loaded[i];
-                    }
-                }
-            }
-            catch
-            {
-                // Fall back to legacy Unity UI Text if TMP_Settings is uninitialized.
-            }
-
-            return null;
-        }
-
-        private static Font ResolveLegacyFont()
-        {
-            Font builtin = Resources.GetBuiltinResource<Font>("Arial.ttf");
-            if (builtin != null)
-                return builtin;
-
-            try
-            {
-                return Font.CreateDynamicFontFromOSFont("Arial", 32);
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
         private static Material GetDoubleSidedUiMaterial()
         {
             if (_doubleSidedUiMat != null)
@@ -643,22 +884,24 @@ namespace MapPinInspector
 
         private static Material GetDoubleSidedFontMaterial(Font font)
         {
-            if (_doubleSidedFontMat != null)
+            if (font == null || font.material == null)
+                return null;
+
+            if (_doubleSidedFontMat != null && _doubleSidedFontSource == font)
                 return _doubleSidedFontMat;
 
             try
             {
-                if (font != null && font.material != null)
-                {
-                    var mat = new Material(font.material);
-                    if (mat.HasProperty("_Cull"))
-                        mat.SetInt("_Cull", 0);
-                    _doubleSidedFontMat = mat;
-                }
+                var mat = new Material(font.material);
+                if (mat.HasProperty("_Cull"))
+                    mat.SetInt("_Cull", 0);
+                _doubleSidedFontMat = mat;
+                _doubleSidedFontSource = font;
             }
             catch
             {
                 _doubleSidedFontMat = null;
+                _doubleSidedFontSource = null;
             }
 
             return _doubleSidedFontMat;
